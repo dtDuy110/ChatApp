@@ -1,0 +1,9 @@
+{
+  "name": "chatapp",
+  "version": "1.0.0",
+  "scripts": {
+    "server": "node server/index.js",
+    "client": "npm run dev --prefix client",
+    "dev": "start cmd /k npm run server && start cmd /k npm run client"
+  }
+}
