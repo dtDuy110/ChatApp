@@ -5,6 +5,24 @@ const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Ensure uploads directory exists
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
 
 const authRoutes = require('./routes/auth');
 const Message = require('./models/Message');
@@ -18,6 +36,19 @@ const io = new Server(server, {
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
 app.use('/api/auth', authRoutes);
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Upload endpoint
+app.post('/api/upload', require('./middleware/auth'), upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+  
+  const fileUrl = `http://localhost:5000/uploads/${req.file.filename}`;
+  res.json({
+    url: fileUrl,
+    fileName: req.file.originalname,
+    mimetype: req.file.mimetype
+  });
+});
 
 // REST: get last 50 messages (requires valid JWT)
 const verifyToken = require('./middleware/auth');
@@ -40,10 +71,34 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   console.log(`[connected] ${socket.user.username}`);
 
-  socket.on('send_message', async (content) => {
-    if (!content || typeof content !== 'string' || content.trim() === '') return;
-    const msg = await Message.create({ sender: socket.user.username, content: content.trim() });
-    io.emit('new_message', { _id: msg._id, sender: msg.sender, content: msg.content, createdAt: msg.createdAt });
+  socket.on('send_message', async (data) => {
+    let messageData = {};
+    if (typeof data === 'string') {
+      if (!data || data.trim() === '') return;
+      messageData = { sender: socket.user.username, content: data.trim(), type: 'text' };
+    } else if (typeof data === 'object') {
+      if (!data.content && !data.fileUrl) return;
+      messageData = {
+        sender: socket.user.username,
+        content: data.content || '',
+        type: data.type || 'text',
+        fileUrl: data.fileUrl || '',
+        fileName: data.fileName || ''
+      };
+    } else {
+      return;
+    }
+    
+    const msg = await Message.create(messageData);
+    io.emit('new_message', { 
+      _id: msg._id, 
+      sender: msg.sender, 
+      content: msg.content, 
+      type: msg.type,
+      fileUrl: msg.fileUrl,
+      fileName: msg.fileName,
+      createdAt: msg.createdAt 
+    });
   });
 
   socket.on('disconnect', () => {
