@@ -134,6 +134,7 @@ export default function Chat() {
   const { auth, logout } = useAuth();
   const socketRef = useRef(null);
   const bottomRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -155,19 +156,44 @@ export default function Chat() {
       setMessages(prev => [...prev, msg]);
     });
 
+    socketRef.current.on('reaction_updated', ({ messageId, reactions }) => {
+      setMessages(prev => prev.map(m => m._id === messageId ? { ...m, reactions } : m));
+    });
+
     return () => socketRef.current.disconnect();
   }, [auth.token]);
 
-  // Auto-scroll to latest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   function sendMessage(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     if (!text.trim()) return;
-    socketRef.current.emit('send_message', text.trim());
+    socketRef.current.emit('send_message', { content: text.trim(), type: 'text' });
     setText('');
+  }
+
+  async function handleImageUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('image', file);
+    try {
+      const res = await api.post('/upload', formData);
+      socketRef.current.emit('send_message', { type: 'image', url: res.data.url });
+    } catch (err) {
+      console.error('Upload failed', err);
+    }
+  }
+
+  function sendSticker(url) {
+    socketRef.current.emit('send_message', { type: 'sticker', url });
+    setShowStickers(false);
+  }
+
+  function toggleReaction(messageId, emoji) {
+    socketRef.current.emit('toggle_reaction', { messageId, emoji });
   }
 
   function formatTime(iso) {
